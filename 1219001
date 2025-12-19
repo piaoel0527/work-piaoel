@@ -1,0 +1,39 @@
+SELECT
+    m.menuid,
+    m.menuname,
+    CASE WHEN r.menuid IS NULL THEN 0 ELSE 1 END AS in_group
+FROM menu m
+LEFT JOIN relation r
+       ON r.menuid = m.menuid
+      AND r.groupid = :groupId
+WHERE
+    (
+        /* mode = 1 / 2：必须满足 menuname 模糊 */
+        (:mode IN (1, 2)
+         AND (:menuName IS NULL OR m.menuname LIKE '%' || :menuName || '%'))
+
+        OR
+
+        /* mode = 3：
+           menuname 模糊
+           OR
+           任意存在于 relation 表中的 menu
+        */
+        (:mode = 3 AND (
+            (:menuName IS NULL OR m.menuname LIKE '%' || :menuName || '%')
+            OR EXISTS (
+                SELECT 1
+                FROM relation r2
+                WHERE r2.menuid = m.menuid
+            )
+        ))
+    )
+AND
+    (
+        (:mode = 1 AND r.menuid IS NOT NULL)  -- 该 group 已有
+        OR
+        (:mode = 2 AND r.menuid IS NULL)      -- 该 group 没有
+        OR
+        (:mode = 3)                           -- mode=3 不限制
+    )
+ORDER BY m.menuid;
