@@ -1,0 +1,181 @@
+有的，而且你说的这个 $，基本可以确定你指的是：Oracle 的 JSON（JSON Path，用 $）。
+这是唯一一个在 Oracle 里**“一个字段存多个值 + 用 $ 查询”**的正经方案。
+
+下面我给你一套 可直接测试的完整 SQL，你能非常直观地看到它是怎么用的。
+
+⸻
+
+方案：JSON 字段（使用 $）
+
+适合：
+	•	不想加表
+	•	checkbox 多选
+	•	Oracle 12c+
+	•	能接受 JSON 查询
+
+⸻
+
+一、创建表（一个字段存多个值）
+
+CREATE TABLE group_t (
+  groupid    NUMBER PRIMARY KEY,
+  groupname  VARCHAR2(100),
+  attr_json  CLOB
+    CHECK (attr_json IS JSON)
+);
+
+这个 attr_json 就是你“一个字段存多个值”的地方
+
+⸻
+
+二、插入数据（a / b / c）
+
+INSERT INTO group_t (groupid, groupname, attr_json)
+VALUES (
+  1,
+  '测试组',
+  '["a","b","c"]'
+);
+
+INSERT INTO group_t (groupid, groupname, attr_json)
+VALUES (
+  2,
+  '第二组',
+  '["a","c"]'
+);
+
+COMMIT;
+
+
+⸻
+
+三、直接查看（这次你能“看懂”）
+
+SELECT groupid, groupname, attr_json
+FROM group_t;
+
+结果类似：
+
+1 | 测试组 | ["a","b","c"]
+2 | 第二组 | ["a","c"]
+
+✔ 这点比 NESTED TABLE 友好太多
+
+⸻
+
+四、查询（这里开始用 $）
+
+⸻
+
+1️⃣ 判断是否包含某个值（比如 a）
+
+SELECT *
+FROM group_t
+WHERE JSON_EXISTS(attr_json, '$[*]?(@ == "a")');
+
+
+⸻
+
+2️⃣ 查询同时包含 a 和 c
+
+SELECT *
+FROM group_t
+WHERE JSON_EXISTS(attr_json, '$[*]?(@ == "a")')
+  AND JSON_EXISTS(attr_json, '$[*]?(@ == "c")');
+
+
+⸻
+
+3️⃣ 查询不包含 b
+
+SELECT *
+FROM group_t
+WHERE NOT JSON_EXISTS(attr_json, '$[*]?(@ == "b")');
+
+
+⸻
+
+4️⃣ 展开成多行（像关系表一样看）
+
+SELECT g.groupid,
+       jt.attr_code
+FROM group_t g,
+     JSON_TABLE(
+       g.attr_json,
+       '$[*]'
+       COLUMNS (
+         attr_code VARCHAR2(10) PATH '$'
+       )
+     ) jt;
+
+结果：
+
+1 | a
+1 | b
+1 | c
+2 | a
+2 | c
+
+👉 你会发现：
+这一步几乎等价于关系表
+
+⸻
+
+五、更新（比 NESTED TABLE 友好）
+
+整体替换
+
+UPDATE group_t
+SET attr_json = '["b","c"]'
+WHERE groupid = 1;
+
+
+⸻
+
+追加一个值（需要 19c+，或用重建方式）
+
+UPDATE group_t
+SET attr_json = JSON_ARRAY_APPEND(attr_json, '$', 'd')
+WHERE groupid = 2;
+
+
+⸻
+
+六、优缺点说实话（很重要）
+
+✅ 优点
+	•	✔ 用 $（你想要的）
+	•	✔ 数据可读
+	•	✔ 不加表
+	•	✔ 比集合类型好维护
+	•	✔ 前端 / MyBatis 友好
+
+❌ 缺点
+	•	❌ 不是关系建模
+	•	❌ 查询比关系表慢
+	•	❌ 需要函数索引才有性能
+	•	❌ 复杂统计麻烦
+
+⸻
+
+七、如果你真的要“上线可用”，我给你一句建议
+
+JSON 是“不加表”的最优解
+但前提是：
+	•	这是“标签 / 属性”
+	•	不是核心业务关系
+
+如果这是 权限 / 核心逻辑 / 强约束关系
+👉 一定还是关系表
+
+⸻
+
+八、我可以继续帮你做的
+
+如果你愿意，我可以马上给你：
+	•	🔹 JSON 函数索引（解决性能）
+	•	🔹 JSON + 你原来 menu / group / relation 的联合查询
+	•	🔹 JSON vs 位图 vs 关系表的最终选型建议
+
+你只要回我一句：
+👉 “这个属性会不会影响核心业务？”
