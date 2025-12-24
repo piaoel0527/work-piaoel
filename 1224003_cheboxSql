@@ -1,0 +1,66 @@
+你这个需求本质是：参数传进来是一个带换行的多值字符串（例如 "1\n2\n3\n4"），在 Oracle SQL 里要把它拆成多行，再用于 LIKE 的 OR 条件（或 IN / EXISTS）。
+
+给你三种最常用写法（都支持换行 \n / \r\n）。
+
+⸻
+
+方案 A（推荐）：把多行拆出来，用 EXISTS（等价 OR）
+
+传参：:p_vals = '1\n2\n3\n4'（或带 \r\n）
+
+SELECT *
+FROM your_table t
+WHERE EXISTS (
+  SELECT 1
+  FROM (
+    SELECT REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL) AS v
+    FROM dual
+    CONNECT BY REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL) IS NOT NULL
+  ) s
+  WHERE t.xx LIKE '%' || s.v || '%'
+);
+
+	•	EXISTS 相当于：xx LIKE '%1%' OR xx LIKE '%2%' OR ...
+	•	能自动忽略空行
+
+⸻
+
+方案 B：用 IN（如果你是等值匹配，不是 LIKE）
+
+如果你其实是 xx = 1 OR xx = 2 ...，那就用 IN 更好：
+
+SELECT *
+FROM your_table t
+WHERE t.xx IN (
+  SELECT REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL)
+  FROM dual
+  CONNECT BY REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL) IS NOT NULL
+);
+
+
+⸻
+
+方案 C：如果 xx 本身就是 $ 分隔的代码（精确包含）
+
+比如 xx = '01$02$10'，而你传的是多行 01\n02\n10，要精确匹配 code：
+
+SELECT *
+FROM your_table t
+WHERE EXISTS (
+  SELECT 1
+  FROM (
+    SELECT REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL) AS v
+    FROM dual
+    CONNECT BY REGEXP_SUBSTR(:p_vals, '[^' || CHR(10) || CHR(13) || ']+', 1, LEVEL) IS NOT NULL
+  ) s
+  WHERE INSTR('$' || t.xx || '$', '$' || s.v || '$') > 0
+);
+
+
+⸻
+
+小提示
+	•	Windows 换行是 \r\n（CHR(13)+CHR(10)），上面我两种都兼容了。
+	•	如果你是 Oracle 12c+，也可以用 JSON_TABLE 之类，但对“换行字符串”来说，上面这种最直接。
+
+如果你告诉我：xx 是 数字字段还是 字符串字段，以及你想要的是 包含匹配（LIKE ‘%v%’） 还是 精确匹配（=），我可以把 SQL 简化到最短最稳的一版。
